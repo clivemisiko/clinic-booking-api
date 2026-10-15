@@ -1,0 +1,10 @@
+# Runtime dependencies. Lower bounds are the versions the code was written
+# against; upper bounds stop a future major release from breaking a deploy.
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+sqlalchemy[asyncio]>=2.0.30,<2.1
+asyncpg>=0.29,<1
+alembic>=1.13,<2
+pydantic[email]>=2.7,<3
+pydantic-settings>=2.3,<3
+tzdata>=2024.1
