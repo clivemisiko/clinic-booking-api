@@ -1,0 +1,129 @@
+name: CI/CD
+
+# Pull requests: lint + tests + Docker build must pass before merging.
+# Merge (push) to main: the same checks run again on the merged code, and only
+# if they all pass is the new commit deployed to Render and verified live.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Superseded PR runs are cancelled; deploys on main are never interrupted midway.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  lint:
+    name: Lint & format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install ruff
+      - run: ruff check .
+      - run: ruff format --check .
+
+  test:
+    name: Tests (PostgreSQL 16)
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: clinic_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/clinic_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Run test suite
+        shell: bash
+        run: |
+          set -o pipefail
+          pytest --cov --cov-report=term-missing --cov-fail-under=85 2>&1 | tee pytest.log
+      - name: Surface failures as an annotation
+        if: failure()
+        shell: bash
+        run: |
+          # Put the tail of the pytest output on the run summary page, so a
+          # failure can be read without downloading the full log.
+          body=$(tail -n 80 pytest.log | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=pytest output (last 80 lines)::${body}"
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build --tag clinic-booking:${{ github.sha }} .
+
+  deploy:
+    name: Deploy to Render
+    needs: [lint, test, docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Trigger Render deploy of this exact commit
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK_URL secret is not set"; exit 1
+          fi
+          curl --fail --silent --show-error -X POST "${RENDER_DEPLOY_HOOK_URL}&ref=${GITHUB_SHA}"
+
+      - name: Wait until the new commit is serving traffic
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          # /health reports the commit Render is running (RENDER_GIT_COMMIT).
+          # Poll for up to 15 minutes: Docker build + migrations + free-tier cold start.
+          for attempt in $(seq 1 90); do
+            live=$(curl --silent --max-time 10 "$APP_URL/health" | jq -r '.version // empty' || true)
+            if [ "$live" = "$GITHUB_SHA" ]; then
+              echo "Deployed $GITHUB_SHA is live"; exit 0
+            fi
+            echo "Attempt $attempt: live version '${live:-unreachable}', waiting..."
+            sleep 10
+          done
+          echo "::error::Deployment of $GITHUB_SHA did not become live within 15 minutes"; exit 1
+
+      - name: Smoke test the live API
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          set -e
+          curl --fail --silent "$APP_URL/health" | jq -e '.status == "ok" and .database == "ok"'
+          curl --fail --silent "$APP_URL/doctors" | jq -e 'length >= 1'
+          tomorrow=$(TZ=Africa/Nairobi date -d tomorrow +%F)
+          curl --fail --silent "$APP_URL/doctors/1/availability?date=$tomorrow" | jq -e '.slots | type == "array"'

@@ -1,0 +1,32 @@
+# Render Blueprint: one web service (Docker) + one PostgreSQL database.
+# Auto-deploy is OFF on purpose: deploys are triggered only by the GitHub
+# Actions pipeline, after lint and tests pass on main.
+services:
+  - type: web
+    name: clinic-booking-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeployTrigger: "off"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: clinic-booking-db
+          property: connectionString
+      - key: ENVIRONMENT
+        value: production
+      - key: CLINIC_TIMEZONE
+        value: Africa/Nairobi
+      - key: DB_POOL_SIZE
+        value: "3"
+      - key: DB_MAX_OVERFLOW
+        value: "2"
+
+databases:
+  - name: clinic-booking-db
+    plan: free
+    region: frankfurt
+    databaseName: clinic
+    postgresMajorVersion: "16"
