@@ -25,7 +25,7 @@ from app.core.config import Settings
 from app.main import create_app
 from app.models import Doctor, Patient, WorkingHours
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]  # repo root (this file is tests/integration/conftest.py)
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/clinic_test"
 )
