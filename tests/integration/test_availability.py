@@ -64,8 +64,10 @@ async def test_day_off_has_no_slots(client, doctor):
     assert await starts(client, doctor.id, "2026-10-24") == []  # Saturday
 
 
-async def test_beyond_horizon_has_no_slots(client, doctor):
-    assert await starts(client, doctor.id, "2027-03-02") == []
+async def test_horizon_boundary_for_availability(client, clock, doctor):
+    clock.instant = clock.instant + timedelta(days=1)  # Tue 20 Oct: cutoff is Mon 18 Jan 2027
+    assert len(await starts(client, doctor.id, "2027-01-18")) == 14  # last bookable day: full list
+    assert await starts(client, doctor.id, "2027-01-19") == []  # first day past the horizon
 
 
 async def test_unknown_doctor_returns_404(client):

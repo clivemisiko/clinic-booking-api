@@ -119,7 +119,7 @@ async def test_reschedule_cancelled_appointment_returns_409(client, appointment)
         (local(2026, 10, 19, 8, 30), "BOOKING_TOO_SOON"),
         (tue(12, 30), "OUTSIDE_WORKING_HOURS"),
         (tue(9, 45), "INVALID_SLOT_BOUNDARY"),
-        (local(2027, 3, 2, 9, 0), "BOOKING_TOO_FAR_AHEAD"),
+        (local(2027, 1, 18, 9, 0), "BOOKING_TOO_FAR_AHEAD"),  # Mon, first day past the 90-day cutoff
     ],
 )
 async def test_reschedule_validates_new_slot_like_a_fresh_booking(client, appointment, start_at, code):
