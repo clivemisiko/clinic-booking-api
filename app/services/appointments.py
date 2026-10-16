@@ -9,15 +9,26 @@ Concurrency model
 * Cancel and reschedule lock the appointment row (SELECT ... FOR UPDATE) so two
   concurrent operations on the same appointment are applied one after the
   other, and the second sees the first one's result (e.g. "already cancelled").
+* When several transactions insert overlapping rows at the same moment, each
+  can end up waiting on another's uncommitted index entry. PostgreSQL breaks
+  that cycle by aborting one of them with a deadlock error (SQLSTATE 40P01)
+  instead of an exclusion violation. That is a normal, documented outcome, not
+  a bug, so booking and rescheduling retry the whole transaction a few times.
+  On the retry the competing booking has committed, and the request gets the
+  correct 409 (or succeeds, if the competitor was rolled back).
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import random
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -41,6 +52,34 @@ from app.models import (
 )
 from app.services.patients import get_patient
 from app.services.scheduling import get_doctor, validate_requested_slot
+
+logger = logging.getLogger(__name__)
+
+# deadlock_detected, serialization_failure: the transaction can safely be re-run.
+RETRYABLE_SQLSTATES = frozenset({"40P01", "40001"})
+MAX_ATTEMPTS = 5
+
+
+def _is_retryable(exc: DBAPIError) -> bool:
+    return getattr(exc.orig, "sqlstate", None) in RETRYABLE_SQLSTATES
+
+
+async def _with_retry[T](session: AsyncSession, operation: Callable[[], Awaitable[T]]) -> T:
+    """Run ``operation`` (a full read-validate-write transaction), re-running it
+    from scratch if PostgreSQL aborts it with a transient concurrency error."""
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            return await operation()
+        except IntegrityError:
+            raise  # a real constraint violation: never retried
+        except DBAPIError as exc:
+            await session.rollback()
+            if not _is_retryable(exc) or attempt == MAX_ATTEMPTS:
+                raise
+            logger.info("Retrying after transient database error (attempt %d): %s", attempt, exc.orig)
+            # Small random back-off so the retrying transactions don't collide again in lockstep.
+            await asyncio.sleep(random.uniform(0.01, 0.05) * attempt)
+    raise AssertionError("unreachable")
 
 
 def _violated_constraint(exc: IntegrityError) -> str:
@@ -79,6 +118,30 @@ async def get_appointment(session: AsyncSession, appointment_id: uuid.UUID, *, f
 
 
 async def book(
+    session: AsyncSession,
+    *,
+    doctor_id: int,
+    patient_id: int,
+    start_at: datetime,
+    reason: str | None,
+    now: datetime,
+    settings: Settings,
+) -> Appointment:
+    async def attempt() -> Appointment:
+        return await _book_once(
+            session,
+            doctor_id=doctor_id,
+            patient_id=patient_id,
+            start_at=start_at,
+            reason=reason,
+            now=now,
+            settings=settings,
+        )
+
+    return await _with_retry(session, attempt)
+
+
+async def _book_once(
     session: AsyncSession,
     *,
     doctor_id: int,
@@ -139,6 +202,15 @@ async def cancel(
 
 
 async def reschedule(
+    session: AsyncSession, appointment_id: uuid.UUID, *, start_at: datetime, now: datetime, settings: Settings
+) -> Appointment:
+    async def attempt() -> Appointment:
+        return await _reschedule_once(session, appointment_id, start_at=start_at, now=now, settings=settings)
+
+    return await _with_retry(session, attempt)
+
+
+async def _reschedule_once(
     session: AsyncSession, appointment_id: uuid.UUID, *, start_at: datetime, now: datetime, settings: Settings
 ) -> Appointment:
     appointment = await get_appointment(session, appointment_id, for_update=True)

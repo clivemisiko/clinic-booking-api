@@ -182,6 +182,8 @@ It reads: *no two booked appointments for the same doctor may have overlapping t
 
 The service just inserts and translates the constraint violation into `409 SLOT_UNAVAILABLE`. There is deliberately no "check first" query: it would duplicate the constraint and still be racy.
 
+One thing the first version got wrong, and CI caught after merge: when several requests insert overlapping rows at the same instant, each can end up waiting on another's uncommitted index entry, and PostgreSQL breaks the cycle by aborting one transaction with a **deadlock error** (`40P01`) rather than a constraint violation. That's documented Postgres behaviour for exclusion constraints, not data corruption, but unhandled it came back to the patient as a 500. Booking and rescheduling now re-run the whole transaction (up to 5 attempts, with a short random back-off) on deadlock or serialization failures. On the retry the winning booking has committed, so the loser gets the correct `409`. The concurrency test now races 10 patients for 6 different slots in one run, so a lucky pass is much less likely to hide this.
+
 Trade-off: this ties the project to PostgreSQL (exclusion constraints need the `btree_gist` extension). I'm comfortable with that. Postgres is available on every cloud I'd consider, Render supports the extension, and the alternative is weaker guarantees.
 
 #### 3. Cancel and reschedule lock the appointment row
