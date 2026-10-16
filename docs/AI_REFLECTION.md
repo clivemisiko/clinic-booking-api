@@ -34,7 +34,7 @@ My prompt was the whole assessment PDF plus: *"Recommend what's best for this pr
 
 The straightforward way to implement "once booked, that slot must not be available to others" is to query whether the slot is free, and insert if it is. <!-- TODO Clive: say honestly whether this is what you'd have written yourself. --> The AI pointed out that two requests arriving at the same moment can both pass that check, and that a lock in Python wouldn't help once there's more than one server. It suggested a PostgreSQL **exclusion constraint** over the time range, filtered to `status = 'booked'`, so the database itself rejects the second booking and cancelled appointments stop counting automatically.
 
-I hadn't used exclusion constraints before, so before accepting it I ran the SQL by hand against a local Postgres: two back-to-back slots (should pass), the same slot for another doctor (pass), re-booking a cancelled slot (pass), and a 09:15 booking overlapping 09:00-09:30 (should fail). All four behaved as expected. The concurrency test (10 simultaneous bookings, exactly one succeeds) now proves it on every CI run.
+I hadn't used exclusion constraints before, so I didn't accept it on trust. Claude ran the constraint SQL against a local Postgres with four cases: two back-to-back slots (should pass), the same slot for another doctor (pass), re-booking a cancelled slot (pass), and a 09:15 booking overlapping 09:00-09:30 (should fail). All four behaved as expected, and I went through the results and the migration before relying on it. The concurrency test (10 simultaneous bookings, exactly one succeeds) now proves it on every CI run.
 
 A second one: the AI suggested having `/health` return the deployed commit SHA, so the pipeline can wait until the merged commit is actually live instead of just firing the deploy and hoping.
 
@@ -53,15 +53,6 @@ A second one: the AI suggested having `/health` return the deployed commit SHA, 
 
 ## 4. Two decisions I made without AI
 
-<!--
-TODO Clive: this must be genuinely yours. Candidates worth thinking about,
-only if they are actually true:
-- Something you changed in the code or README after reviewing it, against or
-  beyond what the AI wrote.
-- A scope call: e.g. deciding which bonus items or extras are worth the time,
-  or deciding to submit early rather than use the full 5 days.
-- Judgement from your own context (e.g. that SMS matters more than email for
-  patients in Kenya, or which Render region to use) that you'd defend from
-  experience.
-For each: what you decided, and why you trusted your own judgement there.
--->
+**Technology stack.** I chose FastAPI, PostgreSQL and Render myself. At the start Claude listed options (FastAPI, Django REST Framework or Go; Render, Railway, Fly.io or a big cloud), and its recommendation happened to match what I picked, but I decided on a different basis: which stack I could explain line by line, debug under time pressure and deploy within the assessment window. These are tools I already know. I trusted my own judgement here because I'm the one who has to defend this code in a follow-up interview, and that matters more to me than any small advantage another stack might have had.
+
+<!-- TODO Clive: second decision. -->
