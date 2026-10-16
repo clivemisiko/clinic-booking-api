@@ -69,10 +69,11 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          # Put the tail of the pytest output on the run summary page, so a
-          # failure can be read without downloading the full log.
-          body=$(tail -n 80 pytest.log | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
-          echo "::error title=pytest output (last 80 lines)::${body}"
+          # Put the failing tests and their error lines on the run summary
+          # page, so a failure can be read without downloading the full log.
+          body=$(grep -E '^(E |FAILED|ERROR)|^_{3,} .* _{3,}$|short test summary|^=+ .*(passed|failed|error)' pytest.log \
+            | grep -v '^E  *\[parameters' | head -n 120 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=pytest failures::${body}"
 
   docker:
     name: Docker image builds
