@@ -111,8 +111,17 @@ async def test_misaligned_start_rejected(client, doctor, patient):
     assert_error(await book(client, doctor.id, patient.id, tue(9, 15)), 422, "INVALID_SLOT_BOUNDARY")
 
 
-async def test_beyond_booking_horizon_rejected(client, doctor, patient):
-    assert_error(await book(client, doctor.id, patient.id, local(2027, 3, 2, 9, 0)), 422, "BOOKING_TOO_FAR_AHEAD")
+async def test_booking_horizon_boundary(client, clock, doctor, patient, other_patient):
+    # Move "now" to Tue 20 Oct so the 90-day cutoff (18 Jan 2027) is a Monday,
+    # a working day: the test then fails if the horizon is widened OR narrowed.
+    clock.instant = clock.instant + timedelta(days=1)
+    last_day = await book(client, doctor.id, patient.id, local(2027, 1, 18, 9, 0))
+    assert last_day.status_code == 201, last_day.text
+
+    error = assert_error(
+        await book(client, doctor.id, other_patient.id, local(2027, 1, 19, 9, 0)), 422, "BOOKING_TOO_FAR_AHEAD"
+    )
+    assert error["details"]["latest_allowed_date"] == "2027-01-18"
 
 
 async def test_unknown_doctor_returns_404(client, patient):

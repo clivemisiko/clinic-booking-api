@@ -287,7 +287,9 @@ async def upcoming_for_patient(session: AsyncSession, patient_id: int, *, now: d
         .where(
             Appointment.patient_id == patient_id,
             Appointment.status == AppointmentStatus.BOOKED,
-            Appointment.start_at >= now,
+            # Strictly after now: once the start time arrives the appointment has
+            # started, which is also when cancel and reschedule stop accepting it.
+            Appointment.start_at > now,
         )
         .order_by(Appointment.start_at)
     )

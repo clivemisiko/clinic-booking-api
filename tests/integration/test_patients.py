@@ -50,8 +50,9 @@ async def test_upcoming_appointments_sorted_and_exclude_cancelled_and_past(clien
     ids = [a["id"] for a in (await client.get(f"/patients/{patient.id}/appointments")).json()]
     assert ids == [monday_morning, tuesday, thursday]
 
-    # Once Monday's appointment is in the past it drops off the list.
-    clock.instant = clock.instant + timedelta(hours=3)  # Mon 11:00 EAT
+    # At the exact start time (Mon 09:30) the appointment has started: it drops
+    # off the list, just as cancel and reschedule stop accepting it.
+    clock.instant = clock.instant + timedelta(hours=1, minutes=30)
     ids = [a["id"] for a in (await client.get(f"/patients/{patient.id}/appointments")).json()]
     assert ids == [tuesday, thursday]
 

@@ -262,7 +262,7 @@ The brief says to decide and document. These are the decisions:
 | Rescheduling to the same slot | `422 SAME_SLOT` | Almost certainly a client bug; succeeding silently would hide it. |
 | Is a cancellation reason required? | **Yes**, 3-500 characters, whitespace-only rejected. | The brief says "cancel with a reason". The reason is stored on the appointment and in the audit trail. |
 | Can one patient hold two appointments at once? | **No**, `409 PATIENT_HAS_CONFLICTING_APPOINTMENT`. | They can't be in two consulting rooms at once. Enforced by a second exclusion constraint. |
-| What does "upcoming" mean (bonus)? | Booked (not cancelled) appointments starting now or later, soonest first. | Cancelled ones aren't upcoming. |
+| What does "upcoming" mean (bonus)? | Booked (not cancelled) appointments whose start time is still in the future, soonest first. | Cancelled ones aren't upcoming, and one whose start time has arrived counts as started, the same rule cancel and reschedule use. |
 | Inactive doctors | `is_active=false` doctors show no availability and reject bookings (`422 DOCTOR_INACTIVE`). Existing bookings stay. | Lets the clinic stop new bookings (e.g. leave) without deleting history. |
 
 ### How this grows
