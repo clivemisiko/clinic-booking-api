@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.api.docs import add_docs_route
 from app.api.routes import appointments, doctors, health, patients
 from app.core.clock import Clock, SystemClock
 from app.core.config import Settings, get_settings
@@ -33,7 +34,7 @@ def create_app(
         yield
         await engine.dispose()
 
-    app = FastAPI(title=settings.app_name, version="1.0.0", description=DESCRIPTION, lifespan=lifespan)
+    app = FastAPI(title=settings.app_name, version="1.0.0", description=DESCRIPTION, lifespan=lifespan, docs_url=None)
     app.state.settings = settings
     app.state.engine = engine
     app.state.sessionmaker = build_sessionmaker(engine)
@@ -42,6 +43,7 @@ def create_app(
     register_exception_handlers(app)
     for module in (health, doctors, patients, appointments):
         app.include_router(module.router)
+    add_docs_route(app)
 
     @app.get("/", include_in_schema=False)
     async def root():

@@ -69,3 +69,11 @@ async def test_health(client):
 
 async def test_unknown_route_uses_error_envelope(client):
     assert_error(await client.get("/nope"), 404, "NOT_FOUND")
+
+
+async def test_docs_page_highlights_the_live_response(client):
+    response = await client.get("/docs")
+    assert response.status_code == 200
+    assert "Clinic Booking API - Swagger UI" in response.text
+    assert ".live-responses-table" in response.text  # the extra style layer is served
+    assert '"tryItOutEnabled": true' in response.text
