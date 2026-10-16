@@ -9,13 +9,19 @@ Concurrency model
 * Cancel and reschedule lock the appointment row (SELECT ... FOR UPDATE) so two
   concurrent operations on the same appointment are applied one after the
   other, and the second sees the first one's result (e.g. "already cancelled").
-* When several transactions insert overlapping rows at the same moment, each
-  can end up waiting on another's uncommitted index entry. PostgreSQL breaks
-  that cycle by aborting one of them with a deadlock error (SQLSTATE 40P01)
-  instead of an exclusion violation. That is a normal, documented outcome, not
-  a bug, so booking and rescheduling retry the whole transaction a few times.
-  On the retry the competing booking has committed, and the request gets the
-  correct 409 (or succeeds, if the competitor was rolled back).
+* Writers that could collide are queued before they write. Without this,
+  several transactions inserting overlapping rows at the same moment can each
+  wait on another's uncommitted index entry, and PostgreSQL breaks the cycle
+  by aborting one with a deadlock error (40P01) instead of an exclusion
+  violation. So booking and rescheduling first take two transaction-scoped
+  advisory locks: one for the doctor, then one for the patient. Every
+  transaction takes them in that same order, so they cannot deadlock, and by
+  the time a writer inserts, any competing booking has already committed and
+  the exclusion constraint reports a clean conflict (409). The locks are
+  released automatically at commit or rollback. The exclusion constraints
+  remain the guarantee; the locks only make conflicts arrive in order.
+* As a safety net, a transaction that still fails with a transient error
+  (deadlock or serialization failure) is re-run a few times.
 """
 
 from __future__ import annotations
@@ -27,7 +33,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -80,6 +86,24 @@ async def _with_retry[T](session: AsyncSession, operation: Callable[[], Awaitabl
             # Small random back-off so the retrying transactions don't collide again in lockstep.
             await asyncio.sleep(random.uniform(0.01, 0.05) * attempt)
     raise AssertionError("unreachable")
+
+
+# Namespaces for the two-key form pg_advisory_xact_lock(int, int), so doctor 7
+# and patient 7 are different locks.
+_DOCTOR_LOCK_NAMESPACE = 1
+_PATIENT_LOCK_NAMESPACE = 2
+_ADVISORY_LOCK = text("SELECT pg_advisory_xact_lock(:namespace, :key)")
+
+
+async def _queue_conflicting_writers(session: AsyncSession, *, doctor_id: int, patient_id: int) -> None:
+    """Wait until no other transaction is writing for this doctor or patient.
+
+    Must run before anything is added to the session: the session flushes
+    pending objects before executing a statement, which would insert the row
+    before the lock is held. Two separate statements guarantee the order.
+    """
+    await session.execute(_ADVISORY_LOCK, {"namespace": _DOCTOR_LOCK_NAMESPACE, "key": doctor_id})
+    await session.execute(_ADVISORY_LOCK, {"namespace": _PATIENT_LOCK_NAMESPACE, "key": patient_id})
 
 
 def _violated_constraint(exc: IntegrityError) -> str:
@@ -154,6 +178,7 @@ async def _book_once(
     doctor = await get_doctor(session, doctor_id)
     await get_patient(session, patient_id)
     start, end = validate_requested_slot(doctor, start_at, now, settings)
+    await _queue_conflicting_writers(session, doctor_id=doctor_id, patient_id=patient_id)
 
     appointment = Appointment(
         id=uuid.uuid4(),
@@ -230,6 +255,7 @@ async def _reschedule_once(
 
     # Same validation as a fresh booking.
     new_start, new_end = validate_requested_slot(appointment.doctor, start_at, now, settings)
+    await _queue_conflicting_writers(session, doctor_id=appointment.doctor_id, patient_id=appointment.patient_id)
 
     # Updating in place releases the old range and claims the new one in a
     # single statement, so the original slot becomes bookable the moment this
