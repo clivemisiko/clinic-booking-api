@@ -4,7 +4,7 @@ A REST API that lets patients of a five-doctor clinic see free 30-minute slots, 
 
 | | |
 |---|---|
-| **Live API** | https://REPLACE-ME.onrender.com (interactive docs at [`/docs`](https://REPLACE-ME.onrender.com/docs)) |
+| **Live API** | https://clinic-booking-api-tbw3.onrender.com (interactive docs at [`/docs`](https://clinic-booking-api-tbw3.onrender.com/docs)) |
 | **Repository** | https://github.com/clivemisiko/clinic-booking-api |
 | **Deploy branch** | `main` (merging a PR into `main` deploys it) |
 | **AI reflection** | [docs/AI_REFLECTION.md](docs/AI_REFLECTION.md) |
@@ -24,23 +24,26 @@ A REST API that lets patients of a five-doctor clinic see free 30-minute slots, 
 
 ## Try it in two minutes
 
-The five doctors are seeded on deploy. Register a patient, look at a doctor's free slots, then book one.
+The five doctors are seeded on deploy. Register a patient, look at a doctor's free slots, then book one. Dr. Otieno (id 1) works Monday to Friday, so set `DAY` to an upcoming weekday.
 
 ```bash
-API=https://REPLACE-ME.onrender.com
+API=https://clinic-booking-api-tbw3.onrender.com
+DAY=2026-10-27   # any upcoming Monday-Friday
 
-# 1. Register a patient (returns its id)
+# 1. Register a patient (emails are unique, so this one is randomised); note the "id"
 curl -s -X POST $API/patients -H 'Content-Type: application/json' \
-  -d '{"full_name": "Amina Wanjiku", "email": "amina@example.com"}'
+  -d "{\"full_name\": \"Amina Wanjiku\", \"email\": \"amina+$RANDOM@example.com\"}"
+PATIENT_ID=...   # the id from the response
 
-# 2. Free slots for doctor 1 on a weekday
-curl -s "$API/doctors/1/availability?date=2026-10-20"
+# 2. Free slots for doctor 1 that day; pick a start_at from the list
+curl -s "$API/doctors/1/availability?date=$DAY"
+START=...        # e.g. "2026-10-27T10:00:00+03:00"
 
-# 3. Book one of them
+# 3. Book it: 201
 curl -s -X POST $API/appointments -H 'Content-Type: application/json' \
-  -d '{"doctor_id": 1, "patient_id": 1, "start_at": "2026-10-20T09:00:00+03:00"}'
+  -d "{\"doctor_id\": 1, \"patient_id\": $PATIENT_ID, \"start_at\": \"$START\"}"
 
-# 4. Try booking the same slot again: 409 SLOT_UNAVAILABLE
+# 4. Run step 3 again: 409 SLOT_UNAVAILABLE
 ```
 
 Or open `/docs` and do the same from the browser.
@@ -383,7 +386,7 @@ uvicorn app.main:app --reload
 
 ## Section 3: deployment and CI/CD
 
-**Live URL:** https://REPLACE-ME.onrender.com
+**Live URL:** https://clinic-booking-api-tbw3.onrender.com
 
 **Hosting:** Render, one Docker web service plus a managed PostgreSQL 16 database, both described in [`render.yaml`](render.yaml) (Render Blueprint), Frankfurt region (closest Render region to Nairobi).
 
@@ -422,7 +425,7 @@ Secrets and settings used by the pipeline:
 | Name | Kind | Value |
 |---|---|---|
 | `RENDER_DEPLOY_HOOK_URL` | Repository secret | Deploy hook from the Render service settings |
-| `APP_URL` | Repository variable | `https://REPLACE-ME.onrender.com` |
+| `APP_URL` | Repository variable | `https://clinic-booking-api-tbw3.onrender.com` |
 
 Branch protection on `main` requires the lint, test and Docker checks to pass before a PR can be merged.
 
